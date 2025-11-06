@@ -1,163 +1,130 @@
-# finding params for url: "https://www2.daad.de/deutschland/studienangebote/international-programmes/en/result/?q=&degree%5B%5D=2&lang%5B%5D=2&fos=5&cert=&admReq=&langExamPC=&langExamLC=&langExamSC=&langDeAvailable=&langEnAvailable=&lvlEn%5B%5D=&modStd%5B%5D=&cit%5B%5D=&tyi%5B%5D=&ins%5B%5D=&fee=2&bgn%5B%5D=2&dat%5B%5D=&prep_subj%5B%5D=&prep_degree%5B%5D=&sort=4&dur=&subjects%5B%5D=38&limit=10&offset=&display=grid#tab_result-grid"
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import time
-import logging
-import datetime
-import pandas as pd
-import numpy as np
 from selenium.webdriver.chrome.service import Service as ChromeService
+import time
+import pandas as pd
+import datetime
+import numpy as np
+import logging
 
+# Setup
 today = datetime.date.today().isoformat()
-
-logging.basicConfig(filename='./logs/log_'+str(today) +
-                    '.txt', level=logging.DEBUG)
-
-parent_url = "https://www2.daad.de/deutschland/studienangebote/international-programmes/en/result/?q=&degree%5B%5D=2&lang%5B%5D=2&cert=&admReq=&langExamPC=&langExamLC=&langExamSC=&subjectGroup%5B%5D=&fos%5B%5D=&langDeAvailable=&langEnAvailable=&lvlEn%5B%5D=&modStd%5B%5D=&cit%5B%5D=&tyi%5B%5D=&ins%5B%5D=&fee=&bgn%5B%5D=&dat%5B%5D=&prep_subj%5B%5D=&prep_degree%5B%5D=&sort=4&dur=&subjects%5B%5D=&limit=10&offset=&display=list"
-# driver = webdriver.Chrome(ChromeDriverManager().install())
+logging.basicConfig(filename=f'./logs/log_{today}.txt', level=logging.DEBUG)
 driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()))
-
 wait = WebDriverWait(driver, 10)
-driver.get(parent_url)
 
-params = ["course", "institution", "url", "admission req",
-          "language req", "deadline"]
-cols = ["course", "institution", "url", "admission req",
-        "language req", "deadline"]
+# DAAD Base URL (Masters, English-taught, etc.)
+PARENT_URL = "https://www2.daad.de/deutschland/studienangebote/international-programmes/en/result/?q=&degree%5B%5D=2&lang%5B%5D=2&sort=4&limit=10&display=list"
 
-final_data = []
+# Target university keywords (cleaned, DAAD-friendly)
+TARGET_UNIS = [
+    "TUB", "LMU", "Freie Universität Berlin", "Hamburg", "Dresden", "RWTH",
+    "Freiburg", "Heidelberg", "KIT", "Humboldt", "TUM", "Tübingen",
+    "Bonn", "FAU", "Göttingen", "Darmstadt", "Cologne", "Stuttgart"
+]
 
-
-def fetch_links():
-    all_urls = []
-    # fetch links and go to next page till there is no next button
-    try:
-        while (True):
-            time.sleep(3)
-            print("next_available TRUE - going to next page")
-            # fetch links and store
-            all_urls.extend([item.get_attribute("href") for item in wait.until(EC.presence_of_all_elements_located(
-                (By.CSS_SELECTOR, ".list-inline-item.mr-0.js-course-detail-link")))])
-            # click next page if exists
-            wait.until(EC.element_to_be_clickable((
-                By.CSS_SELECTOR, "a.js-result-pagination-next"))).click()
-    except Exception as e:
-        print("next_available FALSE", e)
-        pass
-        return all_urls
+PARAMS = ["course", "institution", "url", "admission req", "language req", "deadline"]
+COLS = PARAMS.copy()
+FINAL_DATA = []
 
 
 def accept_cookies():
-    wait.until(EC.element_to_be_clickable((
-        By.CSS_SELECTOR, "body > div.snoop-cc > div.snoop-modal-wrapper > div.snoop-modal.qa-cookie-consent > div > div > div.col-12.col-md-6.snoop-footer__accept-all > button"))).click()
-    # wait.until(EC.element_to_be_clickable((
-    #     By.CSS_SELECTOR, "button.qa-cookie-consent-accept-selected"))).click()
-    # This looks for any button on the page that contains the text "Accept all"
-    # wait.until(EC.element_to_be_clickable((
-    #     By.XPATH, "//button[contains(text(), 'Accept all')]"))).click()
-
-
-def surf1():
     try:
-        # accept cookies
-        accept_cookies()
-
-        # fetch links
-        all_links = fetch_links()
-        return all_links
-
-    except Exception as e:
-        print("error occured .... ", e)
-        logging.critical(e, exc_info=True)
-        pass
+        btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.qa-cookie-consent-accept-all")))
+        btn.click()
+        print("Cookies accepted")
+    except Exception:
+        print("No cookie popup found.")
 
 
-def textcombiner(targetIndex):
-    all_text = []
-    reqs = wait.until(EC.presence_of_all_elements_located((
-        By.CSS_SELECTOR, "#registration > .container > .c-description-list > *:nth-child("+targetIndex+") > *")))
-    for p in reqs:
-        all_text.append(p.get_attribute('innerText'))
-        # all_text.append("\n")
-    return "\n".join(all_text)
+def fetch_all_links():
+    """Scrape all program links across pagination."""
+    all_urls = []
+    driver.get(PARENT_URL)
+    accept_cookies()
+
+    while True:
+        time.sleep(2)
+        course_links = wait.until(EC.presence_of_all_elements_located(
+            (By.CSS_SELECTOR, "a.js-course-detail-link.list-inline-item.mr-0")))
+        all_urls.extend([a.get_attribute("href") for a in course_links])
+
+        try:
+            next_btn = driver.find_element(By.CSS_SELECTOR, "a.js-result-pagination-next")
+            if "disabled" in next_btn.get_attribute("class"):
+                break
+            next_btn.click()
+        except Exception:
+            break
+
+    print(f"Total programs fetched: {len(all_urls)}")
+    return list(set(all_urls))  # remove duplicates
 
 
-def paramData(param, item_link):
-    ["course", "institution", "url", "admission req",
-     "language req", "deadline"]
+def filter_links_by_universities(all_links):
+    """Visit each link once, filter based on TARGET_UNIS."""
+    filtered_links = []
+    print("Filtering by university names...")
+    for link in all_links:
+        driver.get(link)
+        try:
+            institution = wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "h3.c-detail-header__subtitle"))).text
+            if any(keyword.lower() in institution.lower() for keyword in TARGET_UNIS):
+                filtered_links.append((link, institution))
+                print(f"Matched: {institution}")
+        except Exception:
+            continue
+    print(f"Filtered {len(filtered_links)} matching universities.")
+    return filtered_links
+
+
+def text_combiner(targetIndex):
     try:
-        if (param == "course"):
-            return wait.until(EC.presence_of_element_located((
-                By.CSS_SELECTOR, "h2.c-detail-header__title > span:nth-child(1)"))).get_attribute('innerText')
-        if (param == "institution"):
-            return wait.until(EC.presence_of_element_located((
-                By.CSS_SELECTOR, "h3.c-detail-header__subtitle"))).get_attribute('innerHTML').splitlines()[1].strip()
-        if (param == "url"):
-            return item_link
-        if (param == 'admission req'):
-            return textcombiner("2")
-        if (param == 'language req'):
-            return textcombiner("4")
-        if (param == 'deadline'):
-            return textcombiner("6")
-    except Exception as e:
-        print('inside exception here: ', e, param)
-        logging.critical(e, exc_info=True)
+        elements = wait.until(EC.presence_of_all_elements_located(
+            (By.CSS_SELECTOR, f"#registration > .container > .c-description-list > *:nth-child({targetIndex}) > *")))
+        return "\n".join([el.text for el in elements])
+    except Exception:
+        return ""
 
 
-def extractor(item_links):
-    if (item_links):
-        for item_link in item_links:
-            try:
-                print("## Visiting Link: ", item_link)
-                driver.get(item_link)
+def extract_data(filtered_links):
+    for link, uni in filtered_links:
+        print(f"Scraping data from: {link}")
+        driver.get(link)
+        row = []
+        try:
+            course = wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "h2.c-detail-header__title > span:nth-child(1)"))).text
+            admission_req = text_combiner("2")
+            language_req = text_combiner("4")
+            deadline = text_combiner("6")
 
-                dataFromURL = []
-
-                for param in params:
-                    time.sleep(3)
-                    dataFromURL.append(paramData(param, item_link))
-
-                print("result: ", dataFromURL)
-
-                final_data.append(dataFromURL)
-                # delay before going to next url in the array
-
-                print("Done extracting from: ", item_link)
-                time.sleep(3)
-            except Exception as e:
-                print('inside exception', e)
-                logging.critical(e, exc_info=True)
-                continue
-    if not item_links:
-        logging.critical("Empty item_links array.")
+            row = [course, uni, link, admission_req, language_req, deadline]
+            FINAL_DATA.append(row)
+        except Exception as e:
+            print(f"Error at {link}: {e}")
+            logging.critical(e, exc_info=True)
+            continue
 
 
-def exportCSV():
-    # ./Bachelor ./Master ./PHD
-    filename = "PHD Informatik Course List for Summer 2023 - Tuition Free"
-    df2 = pd.DataFrame(np.array(final_data),
-                       columns=cols)
-    print(df2)
-    df2.to_csv("./PHD/"+filename+".csv", encoding='utf-8-sig')
+def export_csv():
+    filename = f"Target_Unis_Masters_{today}"
+    df = pd.DataFrame(np.array(FINAL_DATA), columns=COLS)
+    df.to_csv(f"./{filename}.csv", encoding='utf-8-sig', index=False)
+    print(f"Exported {len(df)} rows to {filename}.csv")
 
 
 def main():
-    try:
-        print("# Starting script ...")
-        print("# Visiting parent url: ", parent_url)
-        item_links = surf1()
-        extractor(item_links)
-        exportCSV()
-    except Exception as e:
-        pass
-    finally:
-        print('inside finally')
-        print("final_data length total: ", len(final_data))
-        driver.quit()
+    print("# Starting focused scrape...")
+    all_links = fetch_all_links()
+    filtered_links = filter_links_by_universities(all_links)
+    extract_data(filtered_links)
+    export_csv()
+    driver.quit()
 
 
 if __name__ == "__main__":
